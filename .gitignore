@@ -1,2 +1,4 @@
+__pycache__/
+generated/
 results/
 .ipynb_checkpoints/

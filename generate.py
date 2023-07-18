@@ -495,7 +495,7 @@ if __name__ == "__main__":
                     for try_max in False, True:
                         prog = compile(comps, target, do_max, try_min, try_max)
                         prog = prog.reallocate()
-                        with open(f"sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
+                        with open(f"generated/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
                             print("\n".join(prog.to()),file=f)
-                            print("\n".join(prog.to()))
+                        print("\n".join(prog.to()))
                         print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
