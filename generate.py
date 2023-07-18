@@ -37,6 +37,8 @@ class Register:
         return f"R{self.index}"
     def z3(self):
         return Int(repr(self))
+    def __lt__(self, other):
+        return self.index < other.index
 
 @dataclass(eq=True, frozen=True)
 class Eq:
@@ -205,10 +207,10 @@ class Program:
             codes.append("}")
         elif self.target == "py":
             codes.append(f"def sort_{self.num_channels}(a):")
-            codes.extend([f"    {r} = a[{i}];" for i, r in enumerate(self.inputs)])
+            codes.extend([f"    {r} = a[{i}]" for i, r in enumerate(self.inputs)])
             for unit in self.units:
                 codes.extend("    "+code for code in unit.to(target))
-            codes.extend([f"    a[{i}] = {r};" for i, r in enumerate(self.outputs)])
+            codes.extend([f"    a[{i}] = {r}" for i, r in enumerate(self.outputs)])
             codes.append(f"""if __name__ == '__main__':
     from random import randint
     from sys import argv
@@ -259,6 +261,8 @@ class Program:
             freeds[:0] = [live.difference(old_live)]
         assert live == set(self.inputs)
         freeds[:0] = [set()]
+        for i in range(len(self.units)):
+            print(sorted(lives[i]), sorted(freeds[i]))
         freed = set()
         repl = {}
         new_units = []
@@ -266,14 +270,18 @@ class Program:
             freeds[i] = {repl[r] if r in repl else r for r in freeds[i]}
             lives[i] = {repl[r] if r in repl else r for r in lives[i]}
             freed.update(freeds[i])
-            if freed and unit.z not in lives[i]:
+            print(lives[i])
+            old_z = repl[unit.z] if unit.z in repl else unit.z
+            if freed and old_z not in lives[i]:
                 freed = list(freed)
                 r, freed = freed[0], set(freed[1:])
-                repl[unit.z] = r
+                repl[old_z] = r
+            print(unit)
             new_x = repl[unit.x] if unit.x in repl else unit.x
             new_y = repl[unit.y] if unit.y in repl else unit.y
             new_z = repl[unit.z] if unit.z in repl else unit.z
             new_units.append(Unit(x=new_x, y=new_y, z=new_z, has_move=unit.has_move, is_max=unit.is_max))
+            print(new_units[-1])
         new_outputs = [repl[r] if r in repl else r for r in self.outputs]
         return Program(num_channels=self.num_channels, units=new_units, inputs=self.inputs, outputs=new_outputs, target=self.target)
 
@@ -504,7 +512,8 @@ if __name__ == "__main__":
                 for try_min in False, True:
                     for try_max in False, True:
                         prog = compile(comps, target, do_max, try_min, try_max)
+                        prog = prog.reallocate()
                         with open(f"sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
                             print("\n".join(prog.to()),file=f)
-                        prog = prog.reallocate()
+                            print("\n".join(prog.to()))
                         print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
