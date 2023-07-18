@@ -144,6 +144,17 @@ class Unit:
                     codes.append(f"int {self.z} = {self.x};")
                 codes.append(f"{self.z} = ({self.x} >= {self.y}) ? {self.y} : {self.z};")
                 codes.append(f"{self.y} = ({self.x} >= {self.y}) ? {self.x} : {self.y};")
+        elif target == "py":
+            if self.is_max:
+                if self.has_move:
+                    codes.append(f"{self.z} = {self.y}")
+                codes.append(f"{self.z} = {self.x} if {self.x} >= {self.y} else {self.z}")
+                codes.append(f"{self.x} = {self.y} if {self.x} >= {self.y} else {self.x}")
+            else:
+                if self.has_move:
+                    codes.append(f"{self.z} = {self.x};")
+                codes.append(f"{self.z} = {self.y} if {self.x} >= {self.y} else {self.z}")
+                codes.append(f"{self.y} = {self.x} if {self.x} >= {self.y} else {self.y}")
         else:
             raise RuntimeError(f"unknown target {repr(target)}")
         return codes
@@ -151,15 +162,13 @@ class Unit:
     def length(self, target):
         if target == "asm":
             return 4 if self.has_move else 3
-        elif target == "C":
+        elif target in ("C", "py"):
             return 3 if self.has_move else 2
         else:
             raise RuntimeError(f"unknown target {repr(target)}")
 
     def saved(self, target):
-        if target == "asm":
-            return 0 if self.has_move else 1
-        elif target == "C":
+        if target in ("asm", "C", "py"):
             return 0 if self.has_move else 1
         else:
             raise RuntimeError(f"unknown target {repr(target)}")
@@ -194,11 +203,35 @@ class Program:
                 codes.extend("    "+code for code in unit.to(target))
             codes.extend([f"    a[{i}] = {r};" for i, r in enumerate(self.outputs)])
             codes.append("}")
+        elif self.target == "py":
+            codes.append(f"def sort_{self.num_channels}(a):")
+            codes.extend([f"    {r} = a[{i}];" for i, r in enumerate(self.inputs)])
+            for unit in self.units:
+                codes.extend("    "+code for code in unit.to(target))
+            codes.extend([f"    a[{i}] = {r};" for i, r in enumerate(self.outputs)])
+            codes.append(f"""if __name__ == '__main__':
+    from random import randint
+    from sys import argv
+    num_loops = int(argv[1]) if len(argv) > 1 else -1
+    count_loops = 0
+    count_errors = 0
+    try:
+        while num_loops != 0:
+            a = [randint(0,{self.num_channels}**2-1) for i in range({self.num_channels})]
+            sort_{self.num_channels}(a)
+            if sorted(a) != a:
+                print(a)
+                count_errors += 1
+            count_loops += 1
+            num_loops -= 1
+    except KeyboardInterrupt:
+        pass
+    print(count_errors,"errors out of",count_loops)""")
         else:
             raise RuntimeError(f"unknown target {repr(target)}")
         return codes
     def length(self):
-        if self.target in ("asm", "C"):
+        if self.target in ("asm", "C", "py"):
             count = 0
             for unit in self.units:
                 count += unit.length(target)
@@ -206,7 +239,7 @@ class Program:
         else:
             raise RuntimeError(f"unknown target {repr(target)}")
     def saved(self):
-        if self.target in ("asm", "C"):
+        if self.target in ("asm", "C", "py"):
             count = 0
             for unit in self.units:
                 count += unit.saved(target)
@@ -440,9 +473,9 @@ def compile(sn, target, do_max, try_min, try_max):
 
 debug = False
 prune = True
-target = "C"
-n_from, n_to = int(argv[1]), int(argv[2])
-sn_type = argv[3]
+target = argv[1]
+sn_type = argv[2]
+n_from, n_to = int(argv[3]), int(argv[4]) if len(argv) > 4 else int(argv[3])
 from sn import sn
 sn[3]["mirrored"] = [(0,1), (0,2), (1,2)]
 # sn = defaultdict(dict)
@@ -471,6 +504,7 @@ if __name__ == "__main__":
                 for try_min in False, True:
                     for try_max in False, True:
                         prog = compile(comps, target, do_max, try_min, try_max)
+                        with open(f"sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
+                            print("\n".join(prog.to()),file=f)
                         prog = prog.reallocate()
-                        print("\n".join(prog.to()))
                         print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
