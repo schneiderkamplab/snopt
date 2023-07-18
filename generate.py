@@ -488,14 +488,17 @@ VERBOSE = 0
 @click.option("--sn-type", "-s", type=str, multiple= True, default=[])
 @click.option("--from", "-f", "from_", type=click.IntRange(min=2), default=3)
 @click.option("--to", "-t", type=click.IntRange(min=2), default=8)
-@click.option("--do-max/--do-min", default=False)
-@click.option("--try-min/--no-try-min", default=True)
-@click.option("--try-max/--no-try-max", default=False)
+@click.option("--do-max", type=bool, multiple=True, default=[])
+@click.option("--try-min", type=bool, multiple=True, default=[])
+@click.option("--try-max", type=bool, multiple=True, default=[])
 @click.option("--verbosity", "-v", count=True)
 def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity):
     global VERBOSE
     VERBOSE = verbosity 
     targets = target if target else TARGETS
+    do_maxs = do_max if do_max else False, True
+    try_mins = try_min if try_min else False, True
+    try_maxs = try_max if try_max else False, True
     for i in range(from_,to+1):
         if not i in sn:
             if VERBOSE > 1:
@@ -510,17 +513,20 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
             comps = sn[i][snt] 
             if VERBOSE > 1:
                 print(comps, file=stderr)
-            prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice)
-            if reallocate:
-                prog = prog.reallocate()
-            for target in targets:
-                prog.target = target
-                if dump is not None:
-                    with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
-                        print("\n".join(prog.to()),file=f)
-                if VERBOSE > 1:
-                    print("\n".join(prog.to()), file=stderr)
-            if VERBOSE:
-                print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
+            for do_max in do_maxs:
+                for try_min in try_mins:
+                    for try_max in try_maxs:
+                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice)
+                        if reallocate:
+                            prog = prog.reallocate()
+                        for target in targets:
+                            prog.target = target
+                            if dump is not None:
+                                with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
+                                    print("\n".join(prog.to()),file=f)
+                            if VERBOSE > 1:
+                                print("\n".join(prog.to()), file=stderr)
+                        if VERBOSE:
+                            print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
 if __name__ == "__main__":
     main()
