@@ -254,9 +254,9 @@ class Program:
             freeds[:0] = [live.difference(old_live)]
         assert live == set(self.inputs)
         freeds[:0] = [set()]
-        if VERBOSE > 1:
+        if VERBOSE > 3:
             for i in range(len(self.units)):
-                print(sorted(lives[i]), sorted(freeds[i]))
+                print(sorted(lives[i]), sorted(freeds[i]), file=stderr)
         freed = set()
         repl = {}
         new_units = []
@@ -264,21 +264,21 @@ class Program:
             freeds[i] = {repl[r] if r in repl else r for r in freeds[i]}
             lives[i] = {repl[r] if r in repl else r for r in lives[i]}
             freed.update(freeds[i])
-            if VERBOSE > 1:
-                print(lives[i])
+            if VERBOSE > 3:
+                print(lives[i], file=stderr)
             old_z = repl[unit.z] if unit.z in repl else unit.z
             if freed and old_z not in lives[i]:
                 freed = list(freed)
                 r, freed = freed[0], set(freed[1:])
                 repl[old_z] = r
-            if VERBOSE > 1:
-                print(unit)
+            if VERBOSE > 3:
+                print(unit, file=stderr)
             new_x = repl[unit.x] if unit.x in repl else unit.x
             new_y = repl[unit.y] if unit.y in repl else unit.y
             new_z = repl[unit.z] if unit.z in repl else unit.z
             new_units.append(Unit(x=new_x, y=new_y, z=new_z, has_move=unit.has_move, is_max=unit.is_max))
-            if VERBOSE > 1:
-                print(new_units[-1])
+            if VERBOSE > 3:
+                print(new_units[-1], file=stderr)
         new_outputs = [repl[r] if r in repl else r for r in self.outputs]
         return Program(num_channels=self.num_channels, units=new_units, inputs=self.inputs, outputs=new_outputs, target=self.target)
 
@@ -326,8 +326,8 @@ def run(constraints, goal):
     s = Solver()
     s.append(Not(Implies(constraint, goal)))
     r = s.check()
-    if VERBOSE > 1:
-        print(r)
+    if VERBOSE > 3:
+        print(r, file=stderr)
     return r.r == 1, s
 
 def compile(sn, target, do_max, try_min, try_max, prune, slice):
@@ -335,7 +335,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
     n = max((y for _,y in sn))+1
     s = State()
     s.extend(((Variable(i,0), Register(i)) for i in range(n)))
-    if VERBOSE > 1:
+    if VERBOSE > 2:
         print(f"sn = {sn}", file=stderr)
         print(f"n = {n}", file=stderr)
         print(f"comps = {comps}", file=stderr)
@@ -347,7 +347,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
         top_post_var = Variable(c.top, c.idx+1)
         bot_pre_var = s.current(c.bot)
         bot_post_var = Variable(c.bot, c.idx+1)
-        if VERBOSE > 1:
+        if VERBOSE > 3:
             print(top_pre_var, bot_pre_var, file=stderr)
             print(top_post_var, bot_post_var, file=stderr)
         x = s.var2reg[top_pre_var]
@@ -381,8 +381,8 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                                 state_constraints.append(c)
                                 break
                     constraints = list(state_constraints)
-                    if VERBOSE > 1:
-                        print("SLICE",len(s.constraints),len(state_constraints))
+                    if VERBOSE > 2:
+                        print("SLICE",len(s.constraints),len(state_constraints), file=stderr)
                 else:
                     constraints = list(s.constraints)
                 constraints.append(Less(x, y))
@@ -391,18 +391,18 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
                 returncode, solver = run(constraints=constraints, goal=goal)
-                if VERBOSE > 1:
+                if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
                 if returncode:
-                    if VERBOSE > 1:
-                        print(solver.model())
-                        print(s.reg2var)
+                    if VERBOSE > 2:
+                        print(solver.model(), file=stderr)
+                        print(s.reg2var, file=stderr)
                     continue
                 keep = False
                 is_max = False
-                if VERBOSE:
-                    print("CULLING MIN")
+                if VERBOSE > 1:
+                    print("CULLING MIN", file=stderr)
                 break
         else:
             for z in s.regs:
@@ -432,8 +432,8 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                                     state_constraints.append(c)
                                     break
                         constraints = list(state_constraints)
-                        if VERBOSE > 1:
-                            print("SLICE",len(s.constraints),len(state_constraints))
+                        if VERBOSE > 2:
+                            print("SLICE",len(s.constraints),len(state_constraints), file=stderr)
                     else:
                         constraints = list(s.constraints)
                     constraints.append(Less(x, y))
@@ -442,17 +442,18 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
                     returncode, solver = run(constraints=constraints, goal=goal)
-                    if VERBOSE > 1:
+                    if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
                     if returncode:
-                        if VERBOSE > 1:
-                            print(solver.model())
+                        if VERBOSE > 2:
+                            print(solver.model(), file=stderr)
+                            print(s.reg2var, file=stderr)
                         continue
                     keep = False
                     is_max = True
-                    if VERBOSE:
-                        print("CULLING MAX")
+                    if VERBOSE > 1:
+                        print("CULLING MAX", file=stderr)
                     break
             else:
                 z = s.next()
@@ -496,11 +497,19 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
     VERBOSE = verbosity 
     targets = target if target else TARGETS
     for i in range(from_,to+1):
+        if not i in sn:
+            if VERBOSE > 1:
+                print("no sorting networks for",i,"channels", file=stderr)
+            continue
         sn_types = sn_type if sn_type else sn[i].keys()
         for snt in sn_types:
-            comps = sn[i][snt]
-            if VERBOSE:
-                print(comps)
+            if not snt in sn[i]:
+                if VERBOSE > 1:
+                    print("no sorting networks of type",snt,"for",i,"channels", file=stderr)
+                continue
+            comps = sn[i][snt] 
+            if VERBOSE > 1:
+                print(comps, file=stderr)
             prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice)
             if reallocate:
                 prog = prog.reallocate()
@@ -509,8 +518,8 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                 if dump is not None:
                     with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
                         print("\n".join(prog.to()),file=f)
-                if VERBOSE:
-                    print("\n".join(prog.to()))
+                if VERBOSE > 1:
+                    print("\n".join(prog.to()), file=stderr)
             if VERBOSE:
                 print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
 if __name__ == "__main__":
