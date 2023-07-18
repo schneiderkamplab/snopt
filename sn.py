@@ -2,6 +2,7 @@ from collections import defaultdict
 sn = defaultdict(dict)
 sn[2]["jgamble_best"] = [(0, 1)]
 sn[3]["jgamble_best"] = [(1, 2), (0, 2), (0, 1)]
+sn[3]["mirrored"] = [(0,1), (0,2), (1,2)]
 sn[4]["jgamble_best"] = [(0, 1), (2, 3), (0, 2), (1, 3), (1, 2)]
 sn[5]["jgamble_best"] = [(0, 1), (3, 4), (2, 4), (2, 3), (1, 4), (0, 3), (0, 2), (1, 3), (1, 2)]
 sn[6]["jgamble_best"] = [(1, 2), (4, 5), (0, 2), (3, 5), (0, 1), (3, 4), (2, 5), (0, 3), (1, 4), (2, 4), (1, 3), (2, 3)]
