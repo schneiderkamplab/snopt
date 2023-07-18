@@ -221,9 +221,10 @@ class Program:
     try:
         while num_loops != 0:
             a = [randint(0,{self.num_channels}**2-1) for i in range({self.num_channels})]
+            b = list(a)
             sort_{self.num_channels}(a)
             if sorted(a) != a:
-                print(a)
+                print(b, a)
                 count_errors += 1
             count_loops += 1
             num_loops -= 1
