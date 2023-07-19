@@ -1,3 +1,4 @@
+import click
 from dataclasses import dataclass
 from sn import sn
 from sys import argv, stderr
@@ -184,7 +185,7 @@ class Unit:
         if self.has_move:
             yield self.z
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True, frozen=False)
 class Program:
     num_channels: Int
     units: List[Unit]
@@ -197,19 +198,19 @@ class Program:
         codes = []
         if self.target == "asm":
             for unit in self.units:
-                codes.extend(unit.to(target))
+                codes.extend(unit.to(self.target))
         elif self.target == "C":
             codes.append(f"void sort_{self.num_channels}(int *a) {{")
             codes.extend([f"    int {r} = a[{i}];" for i, r in enumerate(self.inputs)])
             for unit in self.units:
-                codes.extend("    "+code for code in unit.to(target))
+                codes.extend("    "+code for code in unit.to(self.target))
             codes.extend([f"    a[{i}] = {r};" for i, r in enumerate(self.outputs)])
             codes.append("}")
         elif self.target == "py":
             codes.append(f"def sort_{self.num_channels}(a):")
             codes.extend([f"    {r} = a[{i}]" for i, r in enumerate(self.inputs)])
             for unit in self.units:
-                codes.extend("    "+code for code in unit.to(target))
+                codes.extend("    "+code for code in unit.to(self.target))
             codes.extend([f"    a[{i}] = {r}" for i, r in enumerate(self.outputs)])
             codes.append(f"""if __name__ == '__main__':
     from random import randint
@@ -220,34 +221,27 @@ class Program:
     try:
         while num_loops != 0:
             a = [randint(0,{self.num_channels}**2-1) for i in range({self.num_channels})]
+            b = list(a)
             sort_{self.num_channels}(a)
             if sorted(a) != a:
-                print(a)
+                print(b, a)
                 count_errors += 1
             count_loops += 1
             num_loops -= 1
     except KeyboardInterrupt:
         pass
     print(count_errors,"errors out of",count_loops)""")
-        else:
-            raise RuntimeError(f"unknown target {repr(target)}")
         return codes
     def length(self):
-        if self.target in ("asm", "C", "py"):
-            count = 0
-            for unit in self.units:
-                count += unit.length(target)
-            return count
-        else:
-            raise RuntimeError(f"unknown target {repr(target)}")
+        count = 0
+        for unit in self.units:
+            count += unit.length(self.target)
+        return count
     def saved(self):
-        if self.target in ("asm", "C", "py"):
-            count = 0
-            for unit in self.units:
-                count += unit.saved(target)
-            return count
-        else:
-            raise RuntimeError(f"unknown target {repr(target)}")
+        count = 0
+        for unit in self.units:
+            count += unit.saved(self.target)
+        return count
 
     def reallocate(self):
         live = set(self.outputs)
@@ -261,8 +255,9 @@ class Program:
             freeds[:0] = [live.difference(old_live)]
         assert live == set(self.inputs)
         freeds[:0] = [set()]
-        for i in range(len(self.units)):
-            print(sorted(lives[i]), sorted(freeds[i]))
+        if VERBOSE > 3:
+            for i in range(len(self.units)):
+                print(sorted(lives[i]), sorted(freeds[i]), file=stderr)
         freed = set()
         repl = {}
         new_units = []
@@ -270,18 +265,21 @@ class Program:
             freeds[i] = {repl[r] if r in repl else r for r in freeds[i]}
             lives[i] = {repl[r] if r in repl else r for r in lives[i]}
             freed.update(freeds[i])
-            print(lives[i])
+            if VERBOSE > 3:
+                print(lives[i], file=stderr)
             old_z = repl[unit.z] if unit.z in repl else unit.z
             if freed and old_z not in lives[i]:
                 freed = list(freed)
                 r, freed = freed[0], set(freed[1:])
                 repl[old_z] = r
-            print(unit)
+            if VERBOSE > 3:
+                print(unit, file=stderr)
             new_x = repl[unit.x] if unit.x in repl else unit.x
             new_y = repl[unit.y] if unit.y in repl else unit.y
             new_z = repl[unit.z] if unit.z in repl else unit.z
             new_units.append(Unit(x=new_x, y=new_y, z=new_z, has_move=unit.has_move, is_max=unit.is_max))
-            print(new_units[-1])
+            if VERBOSE > 3:
+                print(new_units[-1], file=stderr)
         new_outputs = [repl[r] if r in repl else r for r in self.outputs]
         return Program(num_channels=self.num_channels, units=new_units, inputs=self.inputs, outputs=new_outputs, target=self.target)
 
@@ -323,23 +321,22 @@ class State:
     def __repr__(self):
         return f"State(vars={self.vars}, regs={self.regs}, var2reg={self.var2reg}, reg2var={self.reg2var}, constraints={self.constraints})"
 
-def run(constraints, extra_constraints, goals):
+def run(constraints, goal):
     constraint = And(*(c.z3() for c in constraints))
-    extra_constraint = And(*(c.z3() for c in extra_constraints))
-    goal = And(*(c.z3() for c in goals))
+    goal = goal.z3()
     s = Solver()
-    s.append(Not(Implies(And(constraint, extra_constraint), goal)))
+    s.append(Not(Implies(constraint, goal)))
     r = s.check()
-    if debug:
-        print(r)
+    if VERBOSE > 3:
+        print(r, file=stderr)
     return r.r == 1, s
 
-def compile(sn, target, do_max, try_min, try_max):
+def compile(sn, target, do_max, try_min, try_max, prune, slice):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
     n = max((y for _,y in sn))+1
     s = State()
     s.extend(((Variable(i,0), Register(i)) for i in range(n)))
-    if debug:
+    if VERBOSE > 2:
         print(f"sn = {sn}", file=stderr)
         print(f"n = {n}", file=stderr)
         print(f"comps = {comps}", file=stderr)
@@ -351,7 +348,7 @@ def compile(sn, target, do_max, try_min, try_max):
         top_post_var = Variable(c.top, c.idx+1)
         bot_pre_var = s.current(c.bot)
         bot_post_var = Variable(c.bot, c.idx+1)
-        if debug:
+        if VERBOSE > 3:
             print(top_pre_var, bot_pre_var, file=stderr)
             print(top_post_var, bot_post_var, file=stderr)
         x = s.var2reg[top_pre_var]
@@ -369,44 +366,44 @@ def compile(sn, target, do_max, try_min, try_max):
                     assert len(top_pre_constraints) == 1
                     if not s.reg2var[z] in (top_pre_constraints[0].right.left, top_pre_constraints[0].right.right):
                         continue
-                vars = []
-                vars.append({top_pre_var, bot_pre_var})# s.reg2var[z]})
-                state_constraints = []
-                for c in reversed(s.constraints):
-                    for i, vs in enumerate(vars):
-                        if vs.intersection(c.vars()):
-                            if i+1 < len(vars):
-                                vars[i+1].update(c.vars())
-                            # elif i+1 <= 16:
-                            else:
-                                vars.append(set(c.vars()))
-                            # else:
-                            #     break
-                            state_constraints.append(c)
-                            break
-                constraints = list(state_constraints)
-                if debug:
-                    print("SLICE",len(s.constraints),len(state_constraints))
-                # constraints = list(s.constraints)
+                if slice:
+                    vars = []
+                    vars.append({top_pre_var, bot_pre_var})
+                    state_constraints = []
+                    for c in reversed(s.constraints):
+                        for i, vs in enumerate(vars):
+                            if vs.intersection(c.vars()):
+                                if i+1 < len(vars):
+                                    vars[i+1].update(c.vars())
+                                elif slice == -1 or i+1 <= slice:
+                                    vars.append(set(c.vars()))
+                                else:
+                                    break
+                                state_constraints.append(c)
+                                break
+                    constraints = list(state_constraints)
+                    if VERBOSE > 2:
+                        print("SLICE",len(s.constraints),len(state_constraints), file=stderr)
+                else:
+                    constraints = list(s.constraints)
                 constraints.append(Less(x, y))
                 constraints.append(Eq(z, s.reg2var[z]))
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
-                extra_constraints = []#Less(z, y)]
-                goals = [Eq(z,Min(x,y))]
-                returncode, solver = run(constraints=constraints, extra_constraints=extra_constraints, goals=goals)
-                if debug:
+                goal = Eq(z,Min(x,y))
+                returncode, solver = run(constraints=constraints, goal=goal)
+                if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
                 if returncode:
-                    if debug:
-                        print(solver.model())
-                        print(s.reg2var)
+                    if VERBOSE > 2:
+                        print(solver.model(), file=stderr)
+                        print(s.reg2var, file=stderr)
                     continue
                 keep = False
                 is_max = False
-                if True or debug:
-                    print("CULLING MIN")
+                if VERBOSE > 1:
+                    print("CULLING MIN", file=stderr)
                 break
         else:
             for z in s.regs:
@@ -420,43 +417,44 @@ def compile(sn, target, do_max, try_min, try_max):
                         assert len(bot_pre_constraints) == 1
                         if not s.reg2var[z] in (bot_pre_constraints[0].right.left, bot_pre_constraints[0].right.right):
                             continue
-                    vars = []
-                    vars.append({top_pre_var, bot_pre_var})# s.reg2var[z]})
-                    state_constraints = []
-                    for c in reversed(s.constraints):
-                        for i, vs in enumerate(vars):
-                            if vs.intersection(c.vars()):
-                                if i+1 < len(vars):
-                                    vars[i+1].update(c.vars())
-                                # elif i+1 <= 16:
-                                else:
-                                    vars.append(set(c.vars()))
-                                # else:
-                                #     break
-                                state_constraints.append(c)
-                                break
-                    constraints = list(state_constraints)
-                    if debug:
-                        print("SLICE",len(s.constraints),len(state_constraints))
-                    # constraints = list(s.constraints)
+                    if slice:
+                        vars = []
+                        vars.append({top_pre_var, bot_pre_var})
+                        state_constraints = []
+                        for c in reversed(s.constraints):
+                            for i, vs in enumerate(vars):
+                                if vs.intersection(c.vars()):
+                                    if i+1 < len(vars):
+                                        vars[i+1].update(c.vars())
+                                    elif slice == -1 or i+1 <= slice:
+                                        vars.append(set(c.vars()))
+                                    else:
+                                        break
+                                    state_constraints.append(c)
+                                    break
+                        constraints = list(state_constraints)
+                        if VERBOSE > 2:
+                            print("SLICE",len(s.constraints),len(state_constraints), file=stderr)
+                    else:
+                        constraints = list(s.constraints)
                     constraints.append(Less(x, y))
                     constraints.append(Eq(z, s.reg2var[z]))
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
-                    extra_constraints = []
-                    goals = [Eq(z,Max(x,y))]
-                    returncode, solver = run(constraints=constraints, extra_constraints=extra_constraints, goals=goals)
-                    if debug:
+                    goal = Eq(z,Max(x,y))
+                    returncode, solver = run(constraints=constraints, goal=goal)
+                    if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
                     if returncode:
-                        if debug:
-                            print(solver.model())
+                        if VERBOSE > 2:
+                            print(solver.model(), file=stderr)
+                            print(s.reg2var, file=stderr)
                         continue
                     keep = False
                     is_max = True
-                    if True or debug:
-                        print("CULLING MAX")
+                    if VERBOSE > 1:
+                        print("CULLING MAX", file=stderr)
                     break
             else:
                 z = s.next()
@@ -470,7 +468,7 @@ def compile(sn, target, do_max, try_min, try_max):
         s.record(Eq(top_post_var, Min(top_pre_var, bot_pre_var)))
         s.record(Eq(bot_post_var, Max(top_pre_var, bot_pre_var)))
         s.record(Lesseq(top_post_var, bot_post_var))
-        if debug:
+        if VERBOSE > 1:
             print(s.constraints, file=stderr)
             print(codes, file=stderr)
             print(f"s = {s}", file=stderr)
@@ -479,23 +477,57 @@ def compile(sn, target, do_max, try_min, try_max):
     prog = Program(num_channels=n, units=units, inputs=inputs, outputs=outputs, target=target)
     return prog
 
-debug = False
-prune = True
-target = argv[1]
-sn_type = argv[2]
-n_from, n_to = int(argv[3]), int(argv[4]) if len(argv) > 4 else int(argv[3])
-if __name__ == "__main__":
-    for i in range(n_from,n_to+1):
-        sn_types = [sn_type] if sn_type != "all" else sn[i].keys()
+TARGETS = ["asm", "C", "py"]
+VERBOSE = 0
+
+@click.command()
+@click.option("--dump", "-d", type=str, default=None)
+@click.option("--prune/--no-prune", default=True)
+@click.option("--slice", type=click.IntRange(min=-1), default=-1)
+@click.option("--reallocate/--no-reallocate", "-r", default=True)
+@click.option("--target", "-t", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
+@click.option("--sn-type", "-s", type=str, multiple= True, default=[])
+@click.option("--from", "-f", "from_", type=click.IntRange(min=2), default=3)
+@click.option("--to", "-t", type=click.IntRange(min=2), default=8)
+@click.option("--do-max", type=bool, multiple=True, default=[])
+@click.option("--try-min", type=bool, multiple=True, default=[])
+@click.option("--try-max", type=bool, multiple=True, default=[])
+@click.option("--verbosity", "-v", count=True)
+def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity):
+    global VERBOSE
+    VERBOSE = verbosity 
+    targets = target if target else TARGETS
+    do_maxs = do_max if do_max else False, True
+    try_mins = try_min if try_min else False, True
+    try_maxs = try_max if try_max else False, True
+    for i in range(from_,to+1):
+        if not i in sn:
+            if VERBOSE > 1:
+                print("no sorting networks for",i,"channels", file=stderr)
+            continue
+        sn_types = sn_type if sn_type else sn[i].keys()
         for snt in sn_types:
-            comps = sn[i][snt]
-            print(comps)
-            for do_max in False, True:
-                for try_min in False, True:
-                    for try_max in False, True:
-                        prog = compile(comps, target, do_max, try_min, try_max)
-                        prog = prog.reallocate()
-                        with open(f"generated/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
-                            print("\n".join(prog.to()),file=f)
-                        print("\n".join(prog.to()))
-                        print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
+            if not snt in sn[i]:
+                if VERBOSE > 1:
+                    print("no sorting networks of type",snt,"for",i,"channels", file=stderr)
+                continue
+            comps = sn[i][snt] 
+            if VERBOSE > 1:
+                print(comps, file=stderr)
+            for do_max in do_maxs:
+                for try_min in try_mins:
+                    for try_max in try_maxs:
+                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice)
+                        if reallocate:
+                            prog = prog.reallocate()
+                        for target in targets:
+                            prog.target = target
+                            if dump is not None:
+                                with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
+                                    print("\n".join(prog.to()),file=f)
+                            if VERBOSE > 1:
+                                print("\n".join(prog.to()), file=stderr)
+                        if VERBOSE:
+                            print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
+if __name__ == "__main__":
+    main()
