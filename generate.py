@@ -40,6 +40,8 @@ class Register:
         return Int(repr(self))
     def __lt__(self, other):
         return self.index < other.index
+    def vars(self):
+        yield self
 
 @dataclass(eq=True, frozen=True)
 class Eq:
@@ -321,17 +323,25 @@ class State:
     def __repr__(self):
         return f"State(vars={self.vars}, regs={self.regs}, var2reg={self.var2reg}, reg2var={self.reg2var}, constraints={self.constraints})"
 
-def run(constraints, goal):
+def run(constraints, goal, zero_one):
     constraint = And(*(c.z3() for c in constraints))
-    goal = goal.z3()
+    goal_z3 = goal.z3()
     s = Solver()
-    s.append(Not(Implies(constraint, goal)))
+    s.append(Not(Implies(constraint, goal_z3)))
     r = s.check()
     if VERBOSE > 3:
         print(r, file=stderr)
+    if zero_one and r.r == 1:
+        vars = {var.z3() for cs in (constraints, [goal]) for c in cs for var in c.vars()}
+        for var in vars:
+            s.append(And(var >= 0, var <= 1))
+        r = s.check()
+        if r.r != 1:
+            print(constraints, goal, file=stderr)
+            assert False
     return r.r == 1, s
 
-def compile(sn, target, do_max, try_min, try_max, prune, slice):
+def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
     n = max((y for _,y in sn))+1
     s = State()
@@ -391,7 +401,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
-                returncode, solver = run(constraints=constraints, goal=goal)
+                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one)
                 if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
@@ -442,7 +452,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice):
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
-                    returncode, solver = run(constraints=constraints, goal=goal)
+                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one)
                     if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
@@ -493,7 +503,8 @@ VERBOSE = 0
 @click.option("--try-min", type=bool, multiple=True, default=[])
 @click.option("--try-max", type=bool, multiple=True, default=[])
 @click.option("--verbosity", "-v", count=True)
-def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity):
+@click.option("--zero_one", type=bool, default=False)
+def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, zero_one):
     global VERBOSE
     VERBOSE = verbosity 
     targets = target if target else TARGETS
@@ -517,7 +528,7 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
             for do_max in do_maxs:
                 for try_min in try_mins:
                     for try_max in try_maxs:
-                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice)
+                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one)
                         if reallocate:
                             prog = prog.reallocate()
                         for target in targets:
