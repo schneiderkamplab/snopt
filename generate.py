@@ -1,5 +1,6 @@
 import click
 from dataclasses import dataclass
+from re import match
 from sn import sn
 from sys import argv, stderr
 from tqdm import tqdm
@@ -496,7 +497,7 @@ VERBOSE = 0
 @click.option("--slice", type=click.IntRange(min=-1), default=-1)
 @click.option("--reallocate/--no-reallocate", "-r", default=True)
 @click.option("--target", "-t", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
-@click.option("--sn-type", "-s", type=str, multiple= True, default=[])
+@click.option("--sn-type", "-s", type=str, multiple=True, default=['%'])
 @click.option("--from", "-f", "from_", type=click.IntRange(min=2), default=3)
 @click.option("--to", "-t", type=click.IntRange(min=2), default=8)
 @click.option("--do-max", type=bool, multiple=True, default=[])
@@ -508,15 +509,20 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
     global VERBOSE
     VERBOSE = verbosity 
     targets = target if target else TARGETS
-    do_maxs = do_max if do_max else False, True
-    try_mins = try_min if try_min else False, True
-    try_maxs = try_max if try_max else False, True
+    do_maxs = do_max if do_max else (False, True)
+    try_mins = try_min if try_min else (False, True)
+    try_maxs = try_max if try_max else (False, True)
     for i in range(from_,to+1):
         if not i in sn:
             if VERBOSE > 1:
                 print("no sorting networks for",i,"channels", file=stderr)
             continue
-        sn_types = sn_type if sn_type else sn[i].keys()
+        sn_types = []
+        for snt in sn_type:
+            snt = f"^{snt.replace('%', '.*')}$"
+            for key in sn[i].keys():
+                if match(snt, key):
+                    sn_types.append(key)
         for snt in sn_types:
             if not snt in sn[i]:
                 if VERBOSE > 1:
