@@ -1,4 +1,5 @@
 click
 jupyter
+nnf[pysat]
 tqdm
 z3-solver

@@ -1,11 +1,14 @@
 import click
 from dataclasses import dataclass
+from nnf import Var, true as nnf_true
 from re import match
 from sn import sn
-from sys import argv, stderr
+from sys import argv, stderr, setrecursionlimit
 from tqdm import tqdm
 from typing import List
 from z3 import And, Implies, Int, Not, Or, Solver
+
+setrecursionlimit(10**6)
 
 def z3_min(z,x,y):
     return And(Or(Int(repr(z)) == Int(repr(x)), Int(repr(z)) == Int(repr(y))), Int(repr(z)) <= Int(repr(x)), Int(repr(z)) <= Int(repr(y)))
@@ -27,6 +30,8 @@ class Variable:
     step: int
     def __repr__(self):
         return f"X{self.channel}_{self.step}"
+    def nnf(self):
+        return Var(repr(self))
     def z3(self):
         return Int(repr(self))
     def vars(self):
@@ -37,6 +42,8 @@ class Register:
     index: int
     def __repr__(self):
         return f"R{self.index}"
+    def nnf(self):
+        return Var(repr(self))
     def z3(self):
         return Int(repr(self))
     def __lt__(self, other):
@@ -50,6 +57,10 @@ class Eq:
     right: object
     def __repr__(self):
         return f"{repr(self.left)} = {repr(self.right)}"
+    def nnf(self):
+        left = self.left.nnf()
+        right = self.right.nnf()
+        return (left | right.negate()) & (left.negate() | right)
     def z3(self):
         if type(self.right) == Min:
             return z3_min(self.left, self.right.left, self.right.right)
@@ -67,6 +78,8 @@ class Min:
     right: object
     def __repr__(self):
         return f"min({repr(self.left)},{repr(self.right)})"
+    def nnf(self):
+        return self.left.nnf() & self.right.nnf()
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
@@ -77,6 +90,8 @@ class Max:
     right: object
     def __repr__(self):
         return f"max({repr(self.left)},{repr(self.right)})"
+    def nnf(self):
+        return self.left.nnf() | self.right.nnf()
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
@@ -87,6 +102,8 @@ class Lesseq:
     right: object
     def __repr__(self):
         return f"$lesseq({repr(self.left)},{repr(self.right)})"
+    def nnf(self):
+        return self.left.nnf().negate() | self.right.nnf()
     def z3(self):
         return self.left.z3() <= self.right.z3()
     def vars(self):
@@ -99,6 +116,8 @@ class Less:
     right: object
     def __repr__(self):
         return f"$less({repr(self.left)},{repr(self.right)})"
+    def nnf(self):
+        return self.left.nnf().negate() & self.right.nnf()
     def z3(self):
         return self.left.z3() < self.right.z3()
     def vars(self):
@@ -111,6 +130,8 @@ class Greatereq:
     right: object
     def __repr__(self):
         return f"$greatereq({repr(self.left)},{repr(self.right)})"
+    def nnf(self):
+        return self.left.nnf() | self.right.nnf().negate()
     def z3(self):
         return self.left.z3() >= self.right.z3()
     def vars(self):
@@ -324,7 +345,24 @@ class State:
     def __repr__(self):
         return f"State(vars={self.vars}, regs={self.regs}, var2reg={self.var2reg}, reg2var={self.reg2var}, constraints={self.constraints})"
 
-def run(constraints, goal, zero_one):
+class NNFWrapper:
+    def __init__(self, assertions, model) -> None:
+        self._assertions = assertions
+        self._model = model
+    def assertions(self):
+        return self.assertions
+    def model(self):
+        return self.model
+
+def run(constraints, goal, zero_one, backend):
+    if backend == "sat":
+        constraint = nnf_true
+        for c in constraints:
+            constraint &= c.nnf()
+        f = (constraint.negate() | goal.nnf()).negate()
+        r = f.solve()
+        return r is not None, NNFWrapper(f, "UNSAT" if r is None else r)
+    assert backend == "z3"
     constraint = And(*(c.z3() for c in constraints))
     goal_z3 = goal.z3()
     s = Solver()
@@ -342,7 +380,7 @@ def run(constraints, goal, zero_one):
             assert False
     return r.r == 1, s
 
-def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one):
+def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
     n = max((y for _,y in sn))+1
     s = State()
@@ -402,7 +440,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one):
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
-                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one)
+                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
                 if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
@@ -453,7 +491,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one):
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
-                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one)
+                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
                     if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
@@ -489,6 +527,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one):
     return prog
 
 TARGETS = ["asm", "C", "py"]
+BACKENDS = ["sat", "z3"]
 VERBOSE = 0
 
 @click.command()
@@ -496,7 +535,7 @@ VERBOSE = 0
 @click.option("--prune/--no-prune", default=True)
 @click.option("--slice", type=click.IntRange(min=-1), default=-1)
 @click.option("--reallocate/--no-reallocate", "-r", default=True)
-@click.option("--target", "-t", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
+@click.option("--target", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
 @click.option("--sn-type", "-s", type=str, multiple=True, default=['%'])
 @click.option("--from", "-f", "from_", type=click.IntRange(min=2), default=3)
 @click.option("--to", "-t", type=click.IntRange(min=2), default=8)
@@ -505,7 +544,8 @@ VERBOSE = 0
 @click.option("--try-max", type=bool, multiple=True, default=[])
 @click.option("--verbosity", "-v", count=True)
 @click.option("--zero_one", type=bool, default=False)
-def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, zero_one):
+@click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), default="sat")
+def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, zero_one, backend):
     global VERBOSE
     VERBOSE = verbosity 
     targets = target if target else TARGETS
@@ -534,7 +574,7 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
             for do_max in do_maxs:
                 for try_min in try_mins:
                     for try_max in try_maxs:
-                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one)
+                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one, backend=backend)
                         if reallocate:
                             prog = prog.reallocate()
                         for target in targets:
