@@ -354,7 +354,7 @@ class NNFWrapper:
     def model(self):
         return self.model
 
-def run(constraints, goal, zero_one, backend, prune):
+def run(constraints, goal, zero_one, backend, prune, fallback):
     if backend == "sat":
         constraint = nnf_true
         for c in constraints:
@@ -363,7 +363,7 @@ def run(constraints, goal, zero_one, backend, prune):
         r = f.solve()
         if r is not None:
             return True, NNFWrapper(f, r)
-        elif prune:
+        elif prune or not fallback:
             return False, NNFWrapper(f, "UNSAT")
         if VERBOSE > 2:
             print("UNSAT but no prune - deferring to z3", file=stderr)
