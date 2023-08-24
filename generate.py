@@ -547,8 +547,8 @@ VERBOSE = 0
 @click.option("--do-max", type=bool, multiple=True, default=[False])
 @click.option("--try-min", type=bool, multiple=True, default=[True])
 @click.option("--try-max", type=bool, multiple=True, default=[False])
-@click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), default="sat")
-@click.option("--fallback/--no-fallback", default=True)
+@click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), multiple=True, default=["sat"])
+@click.option("--fallback", type=bool, multiple=True, default=[True])
 @click.option("--reallocate/--no-reallocate", "-r", default=True)
 #output
 @click.option("--verbosity", "-v", count=True)
@@ -588,19 +588,21 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                     for try_max_ in try_max:
                         for prune_ in prune:
                             for slice_ in slice:
-                                start_time = process_time()
-                                prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend, fallback=fallback)
-                                if reallocate:
-                                    prog = prog.reallocate()
-                                end_time = process_time()
-                                for target in targets:
-                                    prog.target = target
-                                    if dump is not None:
-                                        with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
-                                            print("\n".join(prog.to()),file=f)
-                                    if VERBOSE > 1:
-                                        print("\n".join(prog.to()), file=stderr)
-                                if VERBOSE:
-                                    print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend, fallback, reallocate, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % (end_time-start_time))
+                                for fallback_ in fallback:
+                                    for backend_ in backend:
+                                        start_time = process_time()
+                                        prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_)
+                                        if reallocate:
+                                            prog = prog.reallocate()
+                                        end_time = process_time()
+                                        for target in targets:
+                                            prog.target = target
+                                            if dump is not None:
+                                                with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
+                                                    print("\n".join(prog.to()),file=f)
+                                            if VERBOSE > 1:
+                                                print("\n".join(prog.to()), file=stderr)
+                                        if VERBOSE:
+                                            print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, reallocate, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % (end_time-start_time))
 if __name__ == "__main__":
     main()
