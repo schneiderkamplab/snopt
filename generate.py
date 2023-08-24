@@ -588,8 +588,13 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                     for try_max_ in try_max:
                         for prune_ in prune:
                             for slice_ in slice:
+                                slice_ = (i//slice_) if slice_ > 0 else slice_
                                 for fallback_ in fallback:
                                     for backend_ in backend:
+                                        if backend_ == "z3" and fallback_:
+                                            continue
+                                        if prune_ and fallback_:
+                                            continue
                                         start_time = process_time()
                                         prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_)
                                         cpu_time = process_time()-start_time
