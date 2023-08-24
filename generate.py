@@ -588,6 +588,8 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                     for try_max_ in try_max:
                         for prune_ in prune:
                             for slice_ in slice:
+                                if slice_ > i:
+                                    continue
                                 slice_ = (i//slice_) if slice_ > 0 else slice_
                                 for fallback_ in fallback:
                                     for backend_ in backend:
