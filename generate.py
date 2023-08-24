@@ -4,6 +4,7 @@ from nnf import Var, true as nnf_true
 from re import match
 from sn import sn
 from sys import argv, stderr, setrecursionlimit
+from time import process_time
 from tqdm import tqdm
 from typing import List
 from z3 import And, Implies, Int, Not, Or, Solver
@@ -565,7 +566,7 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
     do_maxs = do_max if do_max else (False, True)
     try_mins = try_min if try_min else (False, True)
     try_maxs = try_max if try_max else (False, True)
-    print("inputs", "snt", "do_max", "try_min", "try_max", "prune", "slice", "backend", "fallback", "reallocate", "prog_len", "prog_saved", "prog_regs")
+    print("inputs", "snt", "do_max", "try_min", "try_max", "prune", "slice", "backend", "fallback", "reallocate", "prog_len", "prog_saved", "prog_regs", "cpu_time")
     for i in range(from_,to+1):
         if not i in sn:
             if VERBOSE > 1:
@@ -588,9 +589,11 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
             for do_max in do_maxs:
                 for try_min in try_mins:
                     for try_max in try_maxs:
+                        start_time = process_time()
                         prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one, backend=backend, fallback=fallback)
                         if reallocate:
                             prog = prog.reallocate()
+                        end_time = process_time()
                         for target in targets:
                             prog.target = target
                             if dump is not None:
@@ -599,6 +602,6 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                             if VERBOSE > 1:
                                 print("\n".join(prog.to()), file=stderr)
                         if VERBOSE:
-                            print(i, snt, do_max, try_min, try_max, prune, slice, backend, fallback, reallocate, prog.length(), prog.saved(), len(prog.registers()))
+                            print(i, snt, do_max, try_min, try_max, prune, slice, backend, fallback, reallocate, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % (end_time-start_time))
 if __name__ == "__main__":
     main()
