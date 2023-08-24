@@ -354,14 +354,20 @@ class NNFWrapper:
     def model(self):
         return self.model
 
-def run(constraints, goal, zero_one, backend):
+def run(constraints, goal, zero_one, backend, prune):
     if backend == "sat":
         constraint = nnf_true
         for c in constraints:
             constraint &= c.nnf()
         f = (constraint.negate() | goal.nnf()).negate()
         r = f.solve()
-        return r is not None, NNFWrapper(f, "UNSAT" if r is None else r)
+        if r is not None:
+            return True, NNFWrapper(f, r)
+        elif prune:
+            return False, NNFWrapper(f, "UNSAT")
+        if VERBOSE > 2:
+            print("UNSAT but no prune - deferring to z3", file=stderr)
+        backend = "z3"
     assert backend == "z3"
     constraint = And(*(c.z3() for c in constraints))
     goal_z3 = goal.z3()
@@ -440,7 +446,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
-                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
+                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune)
                 if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
@@ -491,7 +497,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
-                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
+                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune)
                     if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
