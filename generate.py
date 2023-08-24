@@ -595,17 +595,24 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                                         cpu_time = process_time()-start_time
                                         if False in reallocate:
                                             print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, False, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % cpu_time)
+                                            for target in targets:
+                                                prog.target = target
+                                                if dump is not None:
+                                                    with open(f"{dump}/sn_{i}_{snt}_{do_max_}_{try_min_}_{try_max_}_{prune_}_{slice_}_{backend_}_{fallback_}_{False}.{target.lower()}", "wt") as f:
+                                                        print("\n".join(prog.to()),file=f)
+                                                if VERBOSE > 1:
+                                                    print("\n".join(prog.to()), file=stderr)
                                         if True in reallocate:
                                             start_time = process_time()
                                             prog = prog.reallocate()
                                             cpu_time += process_time()-start_time
                                             print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, True, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % cpu_time)
-                                        for target in targets:
-                                            prog.target = target
-                                            if dump is not None:
-                                                with open(f"{dump}/sn_{i}_{snt}_{do_max}_{try_min}_{try_max}.{target.lower()}", "wt") as f:
-                                                    print("\n".join(prog.to()),file=f)
-                                            if VERBOSE > 1:
-                                                print("\n".join(prog.to()), file=stderr)
+                                            for target in targets:
+                                                prog.target = target
+                                                if dump is not None:
+                                                    with open(f"{dump}/sn_{i}_{snt}_{do_max_}_{try_min_}_{try_max_}_{prune_}_{slice_}_{backend_}_{fallback_}_{True}.{target.lower()}", "wt") as f:
+                                                        print("\n".join(prog.to()),file=f)
+                                                if VERBOSE > 1:
+                                                    print("\n".join(prog.to()), file=stderr)
 if __name__ == "__main__":
     main()
