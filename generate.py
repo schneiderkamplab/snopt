@@ -549,7 +549,7 @@ VERBOSE = 0
 @click.option("--try-max", type=bool, multiple=True, default=[False])
 @click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), multiple=True, default=["sat"])
 @click.option("--fallback", type=bool, multiple=True, default=[True])
-@click.option("--reallocate/--no-reallocate", "-r", default=True)
+@click.option("--reallocate", "-r", type=bool, multiple=True, default=[True])
 #output
 @click.option("--verbosity", "-v", count=True)
 @click.option("--progress/--no-progress", default=True)
@@ -592,9 +592,14 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                                     for backend_ in backend:
                                         start_time = process_time()
                                         prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_)
-                                        if reallocate:
+                                        cpu_time = process_time()-start_time
+                                        if False in reallocate:
+                                            print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, False, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % cpu_time)
+                                        if True in reallocate:
+                                            start_time = process_time()
                                             prog = prog.reallocate()
-                                        end_time = process_time()
+                                            cpu_time += process_time()-start_time
+                                            print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, True, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % cpu_time)
                                         for target in targets:
                                             prog.target = target
                                             if dump is not None:
@@ -602,7 +607,5 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                                                     print("\n".join(prog.to()),file=f)
                                             if VERBOSE > 1:
                                                 print("\n".join(prog.to()), file=stderr)
-                                        if VERBOSE:
-                                            print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, reallocate, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % (end_time-start_time))
 if __name__ == "__main__":
     main()
