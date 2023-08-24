@@ -380,7 +380,7 @@ def run(constraints, goal, zero_one, backend):
             assert False
     return r.r == 1, s
 
-def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend):
+def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend, fallback):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
     n = max((y for _,y in sn))+1
     s = State()
@@ -440,7 +440,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
-                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
+                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, fallback=fallback)
                 if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
@@ -491,7 +491,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
-                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend)
+                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, fallback=fallback)
                     if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
@@ -531,27 +531,35 @@ BACKENDS = ["sat", "z3"]
 VERBOSE = 0
 
 @click.command()
-@click.option("--dump", "-d", type=str, default=None)
+#parameters
 @click.option("--prune/--no-prune", default=True)
 @click.option("--slice", type=click.IntRange(min=-1), default=-1)
-@click.option("--reallocate/--no-reallocate", "-r", default=True)
-@click.option("--target", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
 @click.option("--sn-type", "-s", type=str, multiple=True, default=['%'])
 @click.option("--from", "-f", "from_", type=click.IntRange(min=2), default=3)
 @click.option("--to", "-t", type=click.IntRange(min=2), default=8)
 @click.option("--do-max", type=bool, multiple=True, default=[])
 @click.option("--try-min", type=bool, multiple=True, default=[])
 @click.option("--try-max", type=bool, multiple=True, default=[])
-@click.option("--verbosity", "-v", count=True)
-@click.option("--zero_one", type=bool, default=False)
 @click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), default="sat")
-def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, zero_one, backend):
+@click.option("--fallback/--no-fallback", default=True)
+@click.option("--reallocate/--no-reallocate", "-r", default=True)
+#output
+@click.option("--verbosity", "-v", count=True)
+@click.option("--progress/--no-progress", default=True)
+@click.option("--dump", "-d", type=str, default=None)
+@click.option("--target", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
+@click.option("--zero_one", type=bool, default=False)
+def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, progress, zero_one, backend, fallback):
     global VERBOSE
     VERBOSE = verbosity 
+    global tqdm
+    if not progress:
+        tqdm = lambda x: x
     targets = target if target else TARGETS
     do_maxs = do_max if do_max else (False, True)
     try_mins = try_min if try_min else (False, True)
     try_maxs = try_max if try_max else (False, True)
+    print("inputs", "snt", "do_max", "try_min", "try_max", "prune", "slice", "backend", "fallback", "reallocate", "prog_len", "prog_saved", "prog_regs")
     for i in range(from_,to+1):
         if not i in sn:
             if VERBOSE > 1:
@@ -574,7 +582,7 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
             for do_max in do_maxs:
                 for try_min in try_mins:
                     for try_max in try_maxs:
-                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one, backend=backend)
+                        prog = compile(sn=comps, target=targets[0], do_max=do_max, try_min=try_min, try_max=try_max, prune=prune, slice=slice, zero_one=zero_one, backend=backend, fallback=fallback)
                         if reallocate:
                             prog = prog.reallocate()
                         for target in targets:
@@ -585,6 +593,6 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                             if VERBOSE > 1:
                                 print("\n".join(prog.to()), file=stderr)
                         if VERBOSE:
-                            print("!", i, snt, do_max, try_min, try_max, prog.length(), prog.saved(), len(prog.registers()))
+                            print(i, snt, do_max, try_min, try_max, prune, slice, backend, fallback, reallocate, prog.length(), prog.saved(), len(prog.registers()))
 if __name__ == "__main__":
     main()
