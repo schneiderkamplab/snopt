@@ -548,7 +548,7 @@ VERBOSE = 0
 @click.option("--try-min", type=bool, multiple=True, default=[True])
 @click.option("--try-max", type=bool, multiple=True, default=[False])
 @click.option("--backend", "-b", type=click.Choice(BACKENDS, case_sensitive=False), multiple=True, default=["sat"])
-@click.option("--fallback", type=bool, multiple=True, default=[True])
+@click.option("--fallback", type=bool, multiple=True, default=[False])
 @click.option("--reallocate", "-r", type=bool, multiple=True, default=[True])
 #output
 @click.option("--verbosity", "-v", count=True)
@@ -589,13 +589,16 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                         for prune_ in prune:
                             for slice_ in slice:
                                 if slice_ > i:
+                                    print(f"slice divider {slice_} greater than number of channels {i}", file=stderr)
                                     continue
                                 slice_ = (i//slice_) if slice_ > 0 else slice_
                                 for fallback_ in fallback:
                                     for backend_ in backend:
-                                        if backend_ == "z3" and fallback_:
+                                        if backend_ != "sat" and fallback_:
+                                            print(f"fallback is only relevant for 'sat' backend", file=stderr)
                                             continue
                                         if prune_ and fallback_:
+                                            print(f"fallback is not needed when using 'prune'", file=stderr)
                                             continue
                                         start_time = process_time()
                                         prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_)
