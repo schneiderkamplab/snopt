@@ -363,20 +363,31 @@ def run(constraints, goal, zero_one, backend, prune, fallback):
         f = (constraint.negate() | goal.nnf()).negate()
         r = f.solve()
         if r is not None:
-            return True, NNFWrapper(f, r)
+            return True, NNFWrapper(f, r), None
         elif prune or not fallback:
-            return False, NNFWrapper(f, "UNSAT")
+            return False, NNFWrapper(f, "UNSAT"), None
         if VERBOSE > 2:
             print("UNSAT but no prune - deferring to z3", file=stderr)
         backend = "z3"
     assert backend == "z3"
-    constraint = And(*(c.z3() for c in constraints))
-    goal_z3 = goal.z3()
+    neg_goal_z3 = Not(goal.z3())
     s = Solver()
-    s.append(Not(Implies(constraint, goal_z3)))
+    s.set(unsat_core=True)
+    s.set('core.minimize', True)
+    for i in range(len(constraints)):
+        s.assert_and_track(constraints[i].z3(), f'c{i}')
+    s.assert_and_track(neg_goal_z3, 'g')
     r = s.check()
     if VERBOSE > 3:
         print(r, file=stderr)
+    u = None
+    if r.r == -1:
+        id2c = {}
+        for i in range(len(constraints)):
+            id2c[f'c{i}'] = constraints[i]
+        id2c['g'] = goal
+        core = s.unsat_core()
+        u = [id2c[str(x)] for x in core]
     if zero_one and r.r == 1:
         vars = {var.z3() for cs in (constraints, [goal]) for c in cs for var in c.vars()}
         for var in vars:
@@ -385,7 +396,7 @@ def run(constraints, goal, zero_one, backend, prune, fallback):
         if r.r != 1:
             print(constraints, goal, file=stderr)
             assert False
-    return r.r == 1, s
+    return r.r == 1, s, u
 
 def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend, fallback):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
@@ -447,7 +458,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                 constraints.append(Eq(x, top_pre_var))
                 constraints.append(Eq(y, bot_pre_var))
                 goal = Eq(z,Min(x,y))
-                returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune, fallback=fallback)
+                returncode, solver, core = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune, fallback=fallback)
                 if VERBOSE > 2:
                     print("CASE 1:", file=stderr)
                     print(solver.assertions(), file=stderr)
@@ -498,7 +509,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                     constraints.append(Eq(x, top_pre_var))
                     constraints.append(Eq(y, bot_pre_var))
                     goal = Eq(z,Max(x,y))
-                    returncode, solver = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune, fallback=fallback)
+                    returncode, solver, core = run(constraints=constraints, goal=goal, zero_one=zero_one, backend=backend, prune=prune, fallback=fallback)
                     if VERBOSE > 2:
                         print("CASE 1:", file=stderr)
                         print(solver.assertions(), file=stderr)
