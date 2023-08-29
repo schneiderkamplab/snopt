@@ -430,12 +430,18 @@ def visualize_unsat_core(n: int, comp: Comparator, comps: List[Comparator], core
             mark_comp[comp_i] = "blue"
             cs.append(c)
             cols.append("blue")
-        elif isinstance(c, Eq) and isinstance(c.left, Variable) and (isinstance(c.right, Min) or isinstance(c.right, Max)):
+        elif isinstance(c, Eq) and isinstance(c.left, Variable) and isinstance(c.right, Min):
             mark_channel[c.left] = "teal"
             comp_i = Comparator(c.left.step-1, c.right.left.channel, c.right.right.channel)
             mark_comp[comp_i] = "teal"
             cs.append(c)
             cols.append("teal")
+        elif isinstance(c, Eq) and isinstance(c.left, Variable) and isinstance(c.right, Max):
+            mark_channel[c.left] = "pink"
+            comp_i = Comparator(c.left.step-1, c.right.left.channel, c.right.right.channel)
+            mark_comp[comp_i] = "pink"
+            cs.append(c)
+            cols.append("pink")
         elif isinstance(c, Less) and isinstance(c.left, Register) and isinstance(c.right, Register):
             cs.append(Less(s.reg2var[c.left], s.reg2var[c.right]))
             cols.append("red")
