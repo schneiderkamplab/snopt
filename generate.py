@@ -1,6 +1,7 @@
 import click
 from dataclasses import dataclass
 from nnf import Var, true as nnf_true
+from os import chdir, system
 from re import match
 from sn import sn
 from sys import argv, stderr, setrecursionlimit
@@ -35,6 +36,8 @@ class Variable:
         return Var(repr(self))
     def z3(self):
         return Int(repr(self))
+    def tex(self):
+        return f"X^{{{self.channel}}}_{{{self.step}}}"
     def vars(self):
         yield self
 
@@ -52,8 +55,11 @@ class Register:
     def vars(self):
         yield self
 
+class Constraint:
+    pass
+
 @dataclass(eq=True, frozen=True)
-class Eq:
+class Eq(Constraint):
     left: object
     right: object
     def __repr__(self):
@@ -69,6 +75,8 @@ class Eq:
             return z3_max(self.left, self.right.left, self.right.right)
         else:
             return self.left.z3() == self.right.z3()
+    def tex(self):
+        return f"{self.left.tex()} = {self.right.tex()}"
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
@@ -81,6 +89,8 @@ class Min:
         return f"min({repr(self.left)},{repr(self.right)})"
     def nnf(self):
         return self.left.nnf() & self.right.nnf()
+    def tex(self):
+        return f"\min({self.left.tex()},{self.right.tex()})"
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
@@ -93,12 +103,14 @@ class Max:
         return f"max({repr(self.left)},{repr(self.right)})"
     def nnf(self):
         return self.left.nnf() | self.right.nnf()
+    def tex(self):
+        return f"\max({self.left.tex()},{self.right.tex()})"
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
 
 @dataclass(eq=True, frozen=True)
-class Lesseq:
+class Lesseq(Constraint):
     left: object
     right: object
     def __repr__(self):
@@ -107,12 +119,14 @@ class Lesseq:
         return self.left.nnf().negate() | self.right.nnf()
     def z3(self):
         return self.left.z3() <= self.right.z3()
+    def tex(self):
+        return f"{self.left.tex()} \leq {self.right.tex()}"
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
 
 @dataclass(eq=True, frozen=True)
-class Less:
+class Less(Constraint):
     left: object
     right: object
     def __repr__(self):
@@ -121,12 +135,14 @@ class Less:
         return self.left.nnf().negate() & self.right.nnf()
     def z3(self):
         return self.left.z3() < self.right.z3()
+    def tex(self):
+        return f"{self.left.tex()} < {self.right.tex()}"
     def vars(self):
         yield from self.left.vars()
         yield from self.right.vars()
 
 @dataclass(eq=True, frozen=True)
-class Greatereq:
+class Greatereq(Constraint):
     left: object
     right: object
     def __repr__(self):
@@ -398,7 +414,84 @@ def run(constraints, goal, zero_one, backend, prune, fallback):
             assert False
     return r.r == 1, s, u
 
-def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend, fallback):
+def visualize_unsat_core(n: int, comp: Comparator, comps: List[Comparator], core: List[Constraint], s: State):
+    mark_channel = {}
+    mark_comp = {comp: "red"}
+    cs, cols = [], []
+    for c in core:
+        if isinstance(c, Eq) and isinstance(c.left, Register) and (isinstance(c.right, Min) or isinstance(c.right, Max)):
+            var = s.reg2var[c.left]
+            mark_channel[var] = "orange"
+            goal = Eq(var, Min(s.reg2var[c.right.left], s.reg2var[c.right.right]))
+        elif isinstance(c, Lesseq):
+            mark_channel[c.left] = "blue"
+            mark_channel[c.right] = "blue"
+            comp_i = Comparator(c.left.step-1, c.left.channel, c.right.channel)
+            mark_comp[comp_i] = "blue"
+            cs.append(c)
+            cols.append("blue")
+        elif isinstance(c, Eq) and isinstance(c.left, Variable) and (isinstance(c.right, Min) or isinstance(c.right, Max)):
+            mark_channel[c.left] = "teal"
+            comp_i = Comparator(c.left.step-1, c.right.left.channel, c.right.right.channel)
+            mark_comp[comp_i] = "teal"
+            cs.append(c)
+            cols.append("teal")
+        elif isinstance(c, Less) and isinstance(c.left, Register) and isinstance(c.right, Register):
+            cs.append(Less(s.reg2var[c.left], s.reg2var[c.right]))
+            cols.append("red")
+    lines = []
+    channels_direct = set()
+    channels_indirect = set()
+    layer_from = 0
+    if any((Variable(j, 0) in mark_channel for j in range(n))):
+        lines.append("\\nodelabel{"+",".join((f"\\tiny $\\textcolor{{{mark_channel[v]}}}{{{v.tex()}}}$" if v in mark_channel else "") for v in (Variable(j, 0) for j in range(n)))+"}")
+        lines.append("\\addlayer")
+    for i in range(len(comps)):
+        lines.append(f"\\addcomparator[{mark_comp[comps[i]] if comps[i] in mark_comp else 'black'}]{{{comps[i].top+1}}}{{{comps[i].bot+1}}}")
+        if i+1 < len(comps):
+            print(comps[i].bot, comps[i].top+1)
+            channels_direct.add(comps[i].top)
+            channels_direct.add(comps[i].bot)
+            for j in range(comps[i].top+1, comps[i].bot):
+                channels_indirect.add(j)
+            print(channels_direct,channels_indirect,comps[i],comps[i+1])
+            for k in (comps[i+1].top, comps[i+1].bot):
+                if k in channels_direct:
+                    channels_direct.clear()
+                    channels_indirect.clear()
+                    layer_added = False
+                    for l in range(layer_from+1,i+2):
+                        if any((Variable(j, l) in mark_channel for j in range(n))):
+                            if not layer_added:
+                                lines.append("\\addlayer")
+                                layer_added = True
+                            lines.append("\\nodelabel{"+",".join((f"\\tiny $\\textcolor{{{mark_channel[v]}}}{{{v.tex()}}}$" if v in mark_channel else "") for v in (Variable(j, l) for j in range(n)))+"}")
+                    layer_from = i+1
+                    lines.append("\\nextlayer")
+                    print("=================")
+                    break
+            if channels_direct:
+                for k in range(comps[i+1].top+1, comps[i+1].bot):
+                    if k in channels_direct or k in channels_direct:
+                        channels_indirect.clear()
+                        lines.append("\\addlayer")
+                        print("-----------------")
+                        break
+    template1 = r"""\begin{figure}[t]
+\centering
+\begin{scaletikzpicturetowidth}{\textwidth}
+\begin{sortingnetwork}{"""
+    template2 = r"""
+\end{sortingnetwork}
+\end{scaletikzpicturetowidth}
+  \caption{$"""
+    template3 = r"""$}
+\end{figure}
+"""
+    formula = " \wedge ".join(f"\\textcolor{{{col}}}{{{c.tex()}}}" for c,col in zip(cs,cols)) + f" \\rightarrow \\textcolor{{orange}}{{{goal.tex()}}}"
+    return f"{template1}{n}}}\n"+"\n".join(lines)+template2+formula+template3
+
+def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backend, fallback, visualize_core):
     comps = [Comparator(idx, top, bot) for idx, (top, bot) in enumerate(sn)]
     n = max((y for _,y in sn))+1
     s = State()
@@ -410,11 +503,12 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
         print(f"s = {s}", file=stderr)
     codes = []
     units = []
-    for c in tqdm(comps):
-        top_pre_var = s.current(c.top)
-        top_post_var = Variable(c.top, c.idx+1)
-        bot_pre_var = s.current(c.bot)
-        bot_post_var = Variable(c.bot, c.idx+1)
+    cores = []
+    for comp in tqdm(comps):
+        top_pre_var = s.current(comp.top)
+        top_post_var = Variable(comp.top, comp.idx+1)
+        bot_pre_var = s.current(comp.bot)
+        bot_post_var = Variable(comp.bot, comp.idx+1)
         if VERBOSE > 3:
             print(top_pre_var, bot_pre_var, file=stderr)
             print(top_post_var, bot_post_var, file=stderr)
@@ -467,6 +561,12 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                         print(solver.model(), file=stderr)
                         print(s.reg2var, file=stderr)
                     continue
+                if not returncode and visualize_core:
+                    if not core:
+                        if VERBOSE > 1:
+                            print("no core to visualize")
+                    else:
+                        cores.append(visualize_unsat_core(n, comp, comps, core, s))
                 keep = False
                 is_max = False
                 if VERBOSE > 1:
@@ -518,6 +618,12 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
                             print(solver.model(), file=stderr)
                             print(s.reg2var, file=stderr)
                         continue
+                    if not returncode and visualize_core:
+                        if not core:
+                            if VERBOSE > 1:
+                                print("no core to visualize")
+                        else:
+                            cores.append(visualize_unsat_core(n, comp, comps, core, s))
                     keep = False
                     is_max = True
                     if VERBOSE > 1:
@@ -542,7 +648,7 @@ def compile(sn, target, do_max, try_min, try_max, prune, slice, zero_one, backen
     inputs = [Register(i) for i in range(n)]
     outputs = [s.var2reg[s.current(i)] for i in range(n)]
     prog = Program(num_channels=n, units=units, inputs=inputs, outputs=outputs, target=target)
-    return prog
+    return prog, cores
 
 TARGETS = ["asm", "C", "py"]
 BACKENDS = ["sat", "z3"]
@@ -566,8 +672,9 @@ VERBOSE = 0
 @click.option("--progress/--no-progress", default=True)
 @click.option("--dump", "-d", type=str, default=None)
 @click.option("--target", type=click.Choice(TARGETS, case_sensitive=False), multiple=True, default=[])
-@click.option("--zero_one", type=bool, default=False)
-def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, progress, zero_one, backend, fallback):
+@click.option("--zero_one/--no-zero-one", type=bool, default=False)
+@click.option("--visualize-core/--no-visualize-core", type=bool, default=False)
+def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try_min, try_max, verbosity, progress, zero_one, backend, fallback, visualize_core):
     global VERBOSE
     VERBOSE = verbosity 
     global tqdm
@@ -612,7 +719,7 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                                             print(f"fallback is not needed when using 'prune'", file=stderr)
                                             continue
                                         start_time = process_time()
-                                        prog = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_)
+                                        prog, cores = compile(sn=comps, target=targets[0], do_max=do_max_, try_min=try_min_, try_max=try_max_, prune=prune_, slice=slice_, zero_one=zero_one, backend=backend_, fallback=fallback_, visualize_core=visualize_core)
                                         cpu_time = process_time()-start_time
                                         if False in reallocate:
                                             print(i, snt, do_max_, try_min_, try_max_, prune_, slice_, backend_, fallback_, False, prog.length(), prog.saved(), len(prog.registers()), "%.6f" % cpu_time)
@@ -635,5 +742,72 @@ def main(dump, prune, slice, reallocate, target, sn_type, from_, to, do_max, try
                                                         print("\n".join(prog.to()),file=f)
                                                 if VERBOSE > 1:
                                                     print("\n".join(prog.to()), file=stderr)
+                                        if visualize_core and cores:
+                                            template1 = r"""\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{arrows,automata,shapes,shapes.multipart,decorations.markings,positioning}
+\usepackage{environ}
+\makeatletter
+\newcounter{sncolumncounter}
+\newcounter{snrowcounter}
+\def \nodelabel#1{%
+\setcounter{snrowcounter}{1}
+ \foreach \i in {#1}{%
+   \draw (\sncolwidth*\value{sncolumncounter},\value{snrowcounter}) node[anchor=south]{\scriptsize\i};
+   \addtocounter{snrowcounter}{1}
+ }
+ \addtocounter{snrowcounter}{-1}
+ %\addtocounter{sncolumncounter}{1}
+}
+\newcommand{\sncolwidth}{0.7} % relative to row distance
+\newcommand{\addcomparator}[3][black]{%
+    \draw[line width=1pt,color=#1] (\sncolwidth*\value{sncolumncounter},#2) node[circle,fill=#1,minimum size=5pt,inner sep=0pt,outer sep=0pt]{}--(\sncolwidth*\value{sncolumncounter},#3) node[circle,fill=#1,minimum size=5pt,inner sep=0pt,outer sep=0pt]{};
+}
+\def \addlayer{%
+  \addtocounter{sncolumncounter}{1}
+}
+\def \nextlayer{%
+  \draw [dashed] (\sncolwidth*\value{sncolumncounter}+\sncolwidth,0.6)--(\sncolwidth*\value{sncolumncounter}+\sncolwidth,\value{snrowcounter}+0.6);
+  \addtocounter{sncolumncounter}{2}
+}
+\newsavebox{\measure@tikzpicture}
+\NewEnviron{scaletikzpicturetowidth}[1]{%
+  \def\tikz@width{#1}%
+  \def\tikzscale{1}\begin{lrbox}{\measure@tikzpicture}%
+  \BODY
+  \end{lrbox}%
+  \pgfmathparse{#1/\wd\measure@tikzpicture}%
+  \edef\tikzscale{\pgfmathresult}%
+  \BODY
+}
+\newenvironment{sortingnetwork}[1]{%
+  \setcounter{sncolumncounter}{0}
+  \setcounter{snrowcounter}{#1}
+  \def \sn@fullsize{15}
+  \begin{tikzpicture}[scale=\tikzscale]
+  \begin{scope}[yscale=-1,xscale=1]
+}{
+  \foreach \i in {1, ..., \value{snrowcounter}}
+  {
+    \draw[line width=1pt] (-\sncolwidth,\i)--(\sncolwidth*\value{sncolumncounter}+\sncolwidth,\i);
+  }
+  \end{scope}
+  \end{tikzpicture}
+}
+\renewcommand{\min}{min}
+\renewcommand{\max}{max}
+\makeatother
+\begin{document}
+"""
+                                            template2 = r"""\end{document}"""
+                                            if dump:
+                                                prefix = f"sn_{i}_{snt}_{do_max_}_{try_min_}_{try_max_}_{prune_}_{slice_}_{backend_}_{fallback_}_{False}"
+                                                with open(f"{dump}/{prefix}.tex", "wt") as f:
+                                                    print(template1+"\n".join(cores)+template2, file=f)
+                                                chdir(dump)
+                                                system(f"pdflatex {prefix}.tex")
+                                            else:
+                                                print(template1+"\n".join(cores)+template2, file=stderr)
+
 if __name__ == "__main__":
     main()
