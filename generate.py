@@ -449,12 +449,14 @@ def visualize_unsat_core(n: int, comp: Comparator, comps: List[Comparator], core
     for i in range(len(comps)):
         lines.append(f"\\addcomparator[{mark_comp[comps[i]] if comps[i] in mark_comp else 'black'}]{{{comps[i].top+1}}}{{{comps[i].bot+1}}}")
         if i+1 < len(comps):
-            print(comps[i].bot, comps[i].top+1)
+            if VERBOSE > 4:
+                print(comps[i].bot, comps[i].top+1, file=stderr)
             channels_direct.add(comps[i].top)
             channels_direct.add(comps[i].bot)
             for j in range(comps[i].top+1, comps[i].bot):
                 channels_indirect.add(j)
-            print(channels_direct,channels_indirect,comps[i],comps[i+1])
+            if VERBOSE > 4:
+                print(channels_direct,channels_indirect,comps[i],comps[i+1], file=stderr)
             for k in (comps[i+1].top, comps[i+1].bot):
                 if k in channels_direct:
                     channels_direct.clear()
@@ -468,14 +470,16 @@ def visualize_unsat_core(n: int, comp: Comparator, comps: List[Comparator], core
                             lines.append("\\nodelabel{"+",".join((f"\\tiny $\\textcolor{{{mark_channel[v]}}}{{{v.tex()}}}$" if v in mark_channel else "") for v in (Variable(j, l) for j in range(n)))+"}")
                     layer_from = i+1
                     lines.append("\\nextlayer")
-                    print("=================")
+                    if VERBOSE > 4:
+                        print("=================")
                     break
             if channels_direct:
                 for k in range(comps[i+1].top+1, comps[i+1].bot):
                     if k in channels_direct or k in channels_direct:
                         channels_indirect.clear()
                         lines.append("\\addlayer")
-                        print("-----------------")
+                        if VERBOSE > 4:
+                            print("-----------------")
                         break
     template1 = r"""\begin{figure}[t]
 \centering
